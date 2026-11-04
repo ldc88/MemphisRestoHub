@@ -1,0 +1,844 @@
+/**
+ * Utoy's Tapsi
+ * Loyverse Products Synchronization
+ *
+ * PRODUCTS PHASE
+ *
+ * Purpose:
+ * - Retrieve the complete Loyverse item catalog
+ * - Automatically create LOYVERSE_ITEMS if it does not exist
+ * - Maintain a clean Loyverse catalog mirror
+ * - Preserve image URLs
+ * - Preserve variants and modifier information
+ * - Preserve the complete raw API response
+ *
+ * IMPORTANT:
+ * This file does NOT modify:
+ * - PRODUCTS
+ * - MENU
+ * - ORDERS
+ * - ORDER_ITEMS
+ * - PAYMENTS
+ *
+ * It only maintains LOYVERSE_ITEMS.
+ */
+
+
+/* =========================================================
+ * CONFIGURATION
+ * ======================================================= */
+
+const LOYVERSE_ITEMS_SHEET = 'LOYVERSE_ITEMS';
+
+
+/**
+ * Columns maintained by the Loyverse item mirror.
+ *
+ * One row = one parent Loyverse item.
+ *
+ * Variants are preserved inside VARIANTS_JSON.
+ */
+const LOYVERSE_ITEMS_HEADERS = [
+  'Loyverse_Item_ID',
+  'Handle',
+  'Item_Name',
+  'Category_ID',
+  'Description',
+  'Image_URL',
+  'Sold_By_Weight',
+  'Track_Stock',
+  'Option_1_Name',
+  'Option_2_Name',
+  'Option_3_Name',
+  'Modifier_IDs_JSON',
+  'Variants_Count',
+  'Variants_JSON',
+  'Raw_JSON',
+  'Last_Synced'
+];
+
+
+/* =========================================================
+ * MAIN SYNCHRONIZATION
+ * ======================================================= */
+
+
+/**
+ * Synchronize the complete Loyverse item catalog.
+ *
+ * Safe behavior:
+ * 1. Retrieves all Loyverse items first.
+ * 2. Builds all rows in memory.
+ * 3. Only after successful retrieval does it replace
+ *    the existing LOYVERSE_ITEMS data.
+ *
+ * Therefore an API failure will not destroy the
+ * previous synchronized catalog.
+ */
+function syncLoyverseItems() {
+
+  const startedAt = new Date();
+
+  Logger.log('======================================');
+  Logger.log("Utoy's Loyverse PRODUCTS Sync");
+  Logger.log('======================================');
+  Logger.log('Started: ' + startedAt);
+
+  try {
+
+    /* -----------------------------------------------------
+     * STEP 1 — Retrieve the complete catalog
+     * --------------------------------------------------- */
+
+    Logger.log('Retrieving Loyverse items...');
+
+    const items = getAllLoyverseItems();
+
+    if (!Array.isArray(items)) {
+      throw new Error(
+        'Loyverse API did not return a valid item list.'
+      );
+    }
+
+    Logger.log(
+      'Loyverse parent items retrieved: ' + items.length
+    );
+
+
+    /* -----------------------------------------------------
+     * STEP 2 — Build synchronized rows
+     * --------------------------------------------------- */
+
+    const rows = items.map(function(item) {
+
+      return buildLoyverseItemRow(item);
+
+    });
+
+
+    /* -----------------------------------------------------
+     * STEP 3 — Validate before writing
+     * --------------------------------------------------- */
+
+    validateLoyverseItemRows(rows);
+
+    Logger.log(
+      'Prepared rows: ' + rows.length
+    );
+
+
+    /* -----------------------------------------------------
+     * STEP 4 — Get spreadsheet
+     * --------------------------------------------------- */
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    if (!ss) {
+      throw new Error(
+        'Unable to access the active spreadsheet.'
+      );
+    }
+
+
+    /* -----------------------------------------------------
+     * STEP 5 — Create / prepare LOYVERSE_ITEMS
+     * --------------------------------------------------- */
+
+    const sheet = getOrCreateLoyverseItemsSheet_(ss);
+
+    Logger.log(
+      'Using sheet: ' + sheet.getName()
+    );
+
+
+    /* -----------------------------------------------------
+     * STEP 6 — Write synchronized catalog
+     * --------------------------------------------------- */
+
+    writeLoyverseItems_(sheet, rows);
+
+
+    /* -----------------------------------------------------
+     * STEP 7 — Statistics
+     * --------------------------------------------------- */
+
+    let imageCount = 0;
+    let variantCount = 0;
+
+    items.forEach(function(item) {
+
+      if (item.image_url) {
+        imageCount++;
+      }
+
+      if (Array.isArray(item.variants)) {
+        variantCount += item.variants.length;
+      }
+
+    });
+
+
+    const completedAt = new Date();
+
+    Logger.log('');
+    Logger.log('======================================');
+    Logger.log('SYNC COMPLETE');
+    Logger.log('======================================');
+    Logger.log('Parent items: ' + items.length);
+    Logger.log('Total variants: ' + variantCount);
+    Logger.log('Items with images: ' + imageCount);
+    Logger.log('Started: ' + startedAt);
+    Logger.log('Completed: ' + completedAt);
+    Logger.log('======================================');
+
+
+    return {
+      success: true,
+      parentItems: items.length,
+      variants: variantCount,
+      itemsWithImages: imageCount,
+      startedAt: startedAt,
+      completedAt: completedAt
+    };
+
+
+  } catch (error) {
+
+    Logger.log('');
+    Logger.log('======================================');
+    Logger.log('SYNC FAILED');
+    Logger.log('======================================');
+    Logger.log(error.message);
+    Logger.log('======================================');
+
+    throw error;
+  }
+}
+
+
+/* =========================================================
+ * LOYVERSE ITEM RETRIEVAL
+ * ======================================================= */
+
+
+/**
+ * Retrieves the complete Loyverse item catalog.
+ *
+ * Uses the existing loyverseGet() helper from Loyverse.gs.
+ *
+ * Handles cursor pagination automatically.
+ */
+function getAllLoyverseItems() {
+
+  const allItems = [];
+  let cursor = null;
+
+  do {
+
+    let endpoint = '/items?limit=250';
+
+    if (cursor) {
+      endpoint +=
+        '&cursor=' +
+        encodeURIComponent(cursor);
+    }
+
+    const data = loyverseGet(endpoint);
+
+    if (!data || !Array.isArray(data.items)) {
+      throw new Error(
+        'Unexpected Loyverse /items response.'
+      );
+    }
+
+    data.items.forEach(function(item) {
+
+      allItems.push(item);
+
+    });
+
+    cursor = data.cursor || null;
+
+  } while (cursor);
+
+
+  return allItems;
+}
+
+
+/* =========================================================
+ * ROW BUILDING
+ * ======================================================= */
+
+
+/**
+ * Converts one Loyverse parent item into one
+ * LOYVERSE_ITEMS row.
+ *
+ * Nested information such as variants and modifiers
+ * is stored as JSON for now.
+ *
+ * Later we will normalize this information into:
+ *
+ * PRODUCTS
+ * PRODUCT_VARIANTS
+ * MODIFIERS
+ * MODIFIER_OPTIONS
+ */
+function buildLoyverseItemRow(item) {
+
+  const variants = Array.isArray(item.variants)
+    ? item.variants
+    : [];
+
+
+  const modifierIds =
+    Array.isArray(item.modifiers_ids)
+      ? item.modifiers_ids
+      : [];
+
+
+  return [
+
+    /* Loyverse item ID */
+    cleanLoyverseValue_(item.id),
+
+    /* Handle */
+    cleanLoyverseValue_(item.handle),
+
+    /* Item name */
+    cleanLoyverseValue_(item.item_name),
+
+    /* Category ID */
+    cleanLoyverseValue_(item.category_id),
+
+    /* Description */
+    cleanLoyverseValue_(item.description),
+
+    /* Image URL */
+    cleanLoyverseValue_(item.image_url),
+
+    /* Sold by weight */
+    normalizeBoolean_(item.sold_by_weight),
+
+    /* Track stock */
+    normalizeBoolean_(item.track_stock),
+
+    /* Option names */
+    cleanLoyverseValue_(item.option1_name),
+    cleanLoyverseValue_(item.option2_name),
+    cleanLoyverseValue_(item.option3_name),
+
+    /* Modifier IDs */
+    safeJsonStringify_(modifierIds),
+
+    /* Number of variants */
+    variants.length,
+
+    /* Complete variants */
+    safeJsonStringify_(variants),
+
+    /* Complete raw item */
+    safeJsonStringify_(item),
+
+    /* Sync timestamp */
+    new Date()
+
+  ];
+}
+
+
+/* =========================================================
+ * SHEET CREATION
+ * ======================================================= */
+
+
+/**
+ * Creates LOYVERSE_ITEMS automatically if missing.
+ *
+ * If it already exists, its existing data is retained
+ * until the synchronization has successfully retrieved
+ * the new catalog.
+ */
+function getOrCreateLoyverseItemsSheet_(ss) {
+
+  let sheet =
+    ss.getSheetByName(LOYVERSE_ITEMS_SHEET);
+
+
+  if (!sheet) {
+
+    Logger.log(
+      'LOYVERSE_ITEMS does not exist. Creating it...'
+    );
+
+    sheet = ss.insertSheet(
+      LOYVERSE_ITEMS_SHEET
+    );
+
+  }
+
+
+  ensureLoyverseItemsHeaders_(sheet);
+
+
+  return sheet;
+}
+
+
+/**
+ * Ensures the expected header row exists.
+ */
+function ensureLoyverseItemsHeaders_(sheet) {
+
+  const requiredColumns =
+    LOYVERSE_ITEMS_HEADERS.length;
+
+
+  if (sheet.getMaxColumns() < requiredColumns) {
+
+    sheet.insertColumnsAfter(
+      sheet.getMaxColumns(),
+      requiredColumns - sheet.getMaxColumns()
+    );
+
+  }
+
+
+  const currentHeaders =
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        requiredColumns
+      )
+      .getValues()[0];
+
+
+  let headersMatch = true;
+
+
+  for (
+    let i = 0;
+    i < requiredColumns;
+    i++
+  ) {
+
+    if (
+      String(currentHeaders[i] || '') !==
+      LOYVERSE_ITEMS_HEADERS[i]
+    ) {
+
+      headersMatch = false;
+      break;
+
+    }
+
+  }
+
+
+  if (!headersMatch) {
+
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        requiredColumns
+      )
+      .setValues([
+        LOYVERSE_ITEMS_HEADERS
+      ]);
+
+  }
+
+
+  /* Basic header formatting */
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      requiredColumns
+    )
+    .setFontWeight('bold');
+
+
+  sheet.setFrozenRows(1);
+}
+
+
+/* =========================================================
+ * SAFE SHEET WRITING
+ * ======================================================= */
+
+
+/**
+ * Replaces the data rows in LOYVERSE_ITEMS.
+ *
+ * Existing data is only cleared AFTER the complete new
+ * catalog has already been retrieved and validated.
+ */
+function writeLoyverseItems_(sheet, rows) {
+
+  const columnCount =
+    LOYVERSE_ITEMS_HEADERS.length;
+
+
+  /* Clear existing data only */
+  const lastRow =
+    sheet.getLastRow();
+
+
+  if (lastRow > 1) {
+
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        columnCount
+      )
+      .clearContent();
+
+  }
+
+
+  /* Write new data */
+  if (rows.length > 0) {
+
+    sheet
+      .getRange(
+        2,
+        1,
+        rows.length,
+        columnCount
+      )
+      .setValues(rows);
+
+  }
+
+
+  /* Formatting */
+  sheet
+    .getRange(
+      1,
+      1,
+      Math.max(1, sheet.getLastRow()),
+      columnCount
+    )
+    .setVerticalAlignment('top');
+
+
+  /* Useful widths */
+  sheet.setColumnWidth(1, 230);  // Item ID
+  sheet.setColumnWidth(2, 150);  // Handle
+  sheet.setColumnWidth(3, 220);  // Name
+  sheet.setColumnWidth(4, 230);  // Category
+  sheet.setColumnWidth(5, 300);  // Description
+  sheet.setColumnWidth(6, 350);  // Image URL
+  sheet.setColumnWidth(7, 110);  // Weight
+  sheet.setColumnWidth(8, 110);  // Stock
+  sheet.setColumnWidth(9, 150);  // Option 1
+  sheet.setColumnWidth(10, 150); // Option 2
+  sheet.setColumnWidth(11, 150); // Option 3
+  sheet.setColumnWidth(12, 250); // Modifiers
+  sheet.setColumnWidth(13, 110); // Variant count
+  sheet.setColumnWidth(14, 500); // Variants JSON
+  sheet.setColumnWidth(15, 500); // Raw JSON
+  sheet.setColumnWidth(16, 170); // Last synced
+
+
+  /* Wrap long JSON fields */
+  if (sheet.getLastRow() > 1) {
+
+    sheet
+      .getRange(
+        2,
+        14,
+        sheet.getLastRow() - 1,
+        3
+      )
+      .setWrap(true);
+
+  }
+}
+
+
+/* =========================================================
+ * VALIDATION
+ * ======================================================= */
+
+
+/**
+ * Validates the synchronized dataset before it is
+ * written to the spreadsheet.
+ */
+function validateLoyverseItemRows(rows) {
+
+  if (!Array.isArray(rows)) {
+
+    throw new Error(
+      'Loyverse item rows are not an array.'
+    );
+
+  }
+
+
+  const expectedColumns =
+    LOYVERSE_ITEMS_HEADERS.length;
+
+
+  rows.forEach(function(row, index) {
+
+    if (!Array.isArray(row)) {
+
+      throw new Error(
+        'Invalid row at index ' + index
+      );
+
+    }
+
+
+    if (row.length !== expectedColumns) {
+
+      throw new Error(
+        'Invalid column count at row ' +
+        (index + 2) +
+        '. Expected ' +
+        expectedColumns +
+        ', received ' +
+        row.length
+      );
+
+    }
+
+
+    if (!row[0]) {
+
+      throw new Error(
+        'Loyverse item ID is missing at row ' +
+        (index + 2)
+      );
+
+    }
+
+  });
+}
+
+
+/* =========================================================
+ * VALUE HELPERS
+ * ======================================================= */
+
+
+/**
+ * Converts undefined/null into a clean blank.
+ */
+function cleanLoyverseValue_(value) {
+
+  if (
+    value === null ||
+    value === undefined
+  ) {
+
+    return '';
+
+  }
+
+
+  return String(value);
+}
+
+
+/**
+ * Normalizes boolean values.
+ *
+ * Blank stays blank.
+ */
+function normalizeBoolean_(value) {
+
+  if (
+    value === null ||
+    value === undefined ||
+    value === ''
+  ) {
+
+    return '';
+
+  }
+
+
+  if (value === true) {
+    return true;
+  }
+
+
+  if (value === false) {
+    return false;
+  }
+
+
+  const normalized =
+    String(value)
+      .trim()
+      .toLowerCase();
+
+
+  if (
+    normalized === 'true' ||
+    normalized === 'yes' ||
+    normalized === 'y' ||
+    normalized === '1'
+  ) {
+
+    return true;
+
+  }
+
+
+  if (
+    normalized === 'false' ||
+    normalized === 'no' ||
+    normalized === 'n' ||
+    normalized === '0'
+  ) {
+
+    return false;
+
+  }
+
+
+  return String(value);
+}
+
+
+/**
+ * Safely converts an object/array into JSON.
+ */
+function safeJsonStringify_(value) {
+
+  try {
+
+    return JSON.stringify(value);
+
+  } catch (error) {
+
+    return '';
+
+  }
+}
+
+
+/* =========================================================
+ * VERIFICATION
+ * ======================================================= */
+
+
+/**
+ * Quick verification of the synchronized sheet.
+ *
+ * Does NOT contact Loyverse.
+ *
+ * Run this after syncLoyverseItems().
+ */
+function verifyLoyverseItemsSheet() {
+
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  const sheet =
+    ss.getSheetByName(
+      LOYVERSE_ITEMS_SHEET
+    );
+
+
+  if (!sheet) {
+
+    throw new Error(
+      'LOYVERSE_ITEMS sheet does not exist.'
+    );
+
+  }
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  const lastColumn =
+    sheet.getLastColumn();
+
+
+  Logger.log('======================================');
+  Logger.log('LOYVERSE_ITEMS VERIFICATION');
+  Logger.log('======================================');
+  Logger.log('Rows including header: ' + lastRow);
+  Logger.log('Columns: ' + lastColumn);
+
+
+  if (lastRow <= 1) {
+
+    Logger.log(
+      'No synchronized item rows found.'
+    );
+
+    return {
+      success: true,
+      itemCount: 0
+    };
+
+  }
+
+
+  const values =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        lastColumn
+      )
+      .getValues();
+
+
+  let imageCount = 0;
+  let variantCount = 0;
+
+
+  values.forEach(function(row) {
+
+    if (row[5]) {
+      imageCount++;
+    }
+
+    variantCount +=
+      Number(row[12]) || 0;
+
+  });
+
+
+  Logger.log(
+    'Parent items: ' + values.length
+  );
+
+  Logger.log(
+    'Items with images: ' + imageCount
+  );
+
+  Logger.log(
+    'Total variants: ' + variantCount
+  );
+
+  Logger.log('======================================');
+
+
+  return {
+    success: true,
+    itemCount: values.length,
+    itemsWithImages: imageCount,
+    variants: variantCount
+  };
+}

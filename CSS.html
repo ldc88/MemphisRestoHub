@@ -1,0 +1,570 @@
+/**
+ * UTOY'S TAPSI
+ * CATEGORIES SYNC
+ *
+ * Source of truth:
+ *   Loyverse Categories
+ *
+ * Destination:
+ *   Google Sheet: CATEGORIES
+ *
+ * This file is intentionally isolated from:
+ *   - ORDERS
+ *   - ORDER_ITEMS
+ *   - Dashboard
+ *   - Customer checkout
+ *   - Production V23
+ *
+ * Initial implementation:
+ *   Loyverse -> CATEGORIES
+ *
+ * No customer-facing code is changed here.
+ */
+
+const CATEGORIES_SHEET_NAME = 'CATEGORIES';
+
+const CATEGORIES_HEADERS = [
+  'Category_ID',
+  'Loyverse_Category_ID',
+  'Category_Name',
+  'Color',
+  'Sort_Order',
+  'Active',
+  'Created_At',
+  'Deleted_At',
+  'Last_Synced'
+];
+
+
+/**
+ * Get all categories from Loyverse.
+ *
+ * Uses the existing loyverseGet() function from Loyverse.gs.
+ *
+ * Loyverse API:
+ *   GET /categories
+ *
+ * Pagination:
+ *   limit <= 250
+ *   cursor returned by API
+ */
+function getAllLoyverseCategoriesForSync_() {
+  const categories = [];
+  let cursor = null;
+
+  while (true) {
+    let endpoint = '/categories?limit=250';
+
+    if (cursor) {
+      endpoint += '&cursor=' + encodeURIComponent(cursor);
+    }
+
+    const response = loyverseGet(endpoint);
+
+    if (!response || !Array.isArray(response.categories)) {
+      throw new Error(
+        'Invalid Loyverse categories response.'
+      );
+    }
+
+    response.categories.forEach(function(category) {
+      categories.push(category);
+    });
+
+    cursor = response.cursor || null;
+
+    if (!cursor) {
+      break;
+    }
+  }
+
+  return categories;
+}
+
+
+/**
+ * Convert Loyverse category data into Utoy's CATEGORIES rows.
+ */
+function buildCategoriesRows_(categories) {
+  const now = new Date();
+
+  /*
+   * Loyverse returns newest categories first.
+   *
+   * We reverse that order for initial Sort_Order so the
+   * oldest category gets the lowest number.
+   *
+   * Sort_Order remains Utoy's local presentation field.
+   */
+  const orderedCategories = categories.slice().reverse();
+
+  return orderedCategories.map(function(category, index) {
+
+    if (!category.id) {
+      throw new Error(
+        'Loyverse category is missing id.'
+      );
+    }
+
+    if (!category.name) {
+      throw new Error(
+        'Loyverse category ' +
+        category.id +
+        ' is missing name.'
+      );
+    }
+
+    return [
+      'CAT-' + category.id,
+      category.id,
+      category.name,
+      category.color || 'GREY',
+      index + 1,
+      category.deleted_at ? false : true,
+      category.created_at || '',
+      category.deleted_at || '',
+      now
+    ];
+  });
+}
+
+
+/**
+ * Ensure CATEGORIES sheet exists and has the correct headers.
+ */
+function getOrCreateCategoriesSheet_() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+  let sheet = spreadsheet.getSheetByName(
+    CATEGORIES_SHEET_NAME
+  );
+
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(
+      CATEGORIES_SHEET_NAME
+    );
+  }
+
+  sheet.getRange(
+    1,
+    1,
+    1,
+    CATEGORIES_HEADERS.length
+  ).setValues([CATEGORIES_HEADERS]);
+
+  return sheet;
+}
+
+
+/**
+ * Validate category rows before writing.
+ */
+function validateCategoriesRows_(rows) {
+  const categoryIds = {};
+  const loyverseIds = {};
+  const names = {};
+
+  rows.forEach(function(row, index) {
+
+    const rowNumber = index + 2;
+
+    const categoryId = String(row[0] || '').trim();
+    const loyverseId = String(row[1] || '').trim();
+    const categoryName = String(row[2] || '').trim();
+
+    if (!categoryId) {
+      throw new Error(
+        'CATEGORIES validation failed: missing Category_ID at row ' +
+        rowNumber
+      );
+    }
+
+    if (!loyverseId) {
+      throw new Error(
+        'CATEGORIES validation failed: missing Loyverse_Category_ID at row ' +
+        rowNumber
+      );
+    }
+
+    if (!categoryName) {
+      throw new Error(
+        'CATEGORIES validation failed: missing Category_Name at row ' +
+        rowNumber
+      );
+    }
+
+    if (categoryIds[categoryId]) {
+      throw new Error(
+        'Duplicate Category_ID detected: ' +
+        categoryId
+      );
+    }
+
+    if (loyverseIds[loyverseId]) {
+      throw new Error(
+        'Duplicate Loyverse_Category_ID detected: ' +
+        loyverseId
+      );
+    }
+
+    /*
+     * Category names should normally be unique in Loyverse.
+     * Treat duplicates as an error so we do not silently create
+     * ambiguous customer-menu categories.
+     */
+    const nameKey = categoryName.toLowerCase();
+
+    if (names[nameKey]) {
+      throw new Error(
+        'Duplicate category name detected: ' +
+        categoryName
+      );
+    }
+
+    categoryIds[categoryId] = true;
+    loyverseIds[loyverseId] = true;
+    names[nameKey] = true;
+  });
+}
+
+
+/**
+ * Safely replace the synchronized CATEGORIES data.
+ *
+ * We retrieve and validate everything BEFORE clearing the sheet.
+ */
+function writeCategories_(rows) {
+  const sheet = getOrCreateCategoriesSheet_();
+
+  validateCategoriesRows_(rows);
+
+  const requiredColumns = CATEGORIES_HEADERS.length;
+
+  /*
+   * Clear only the columns maintained by this sync.
+   *
+   * We intentionally do not wipe unrelated columns beyond
+   * our controlled schema.
+   */
+  const maxRows = sheet.getMaxRows();
+
+  if (maxRows > 1) {
+    sheet
+      .getRange(
+        2,
+        1,
+        maxRows - 1,
+        requiredColumns
+      )
+      .clearContent();
+  }
+
+  if (rows.length > 0) {
+    sheet
+      .getRange(
+        2,
+        1,
+        rows.length,
+        requiredColumns
+      )
+      .setValues(rows);
+  }
+
+  /*
+   * Basic formatting.
+   */
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      requiredColumns
+    )
+    .setFontWeight('bold');
+
+  sheet
+    .getRange(
+      1,
+      1,
+      Math.max(rows.length + 1, 1),
+      requiredColumns
+    )
+    .setVerticalAlignment('middle');
+
+  sheet.setFrozenRows(1);
+
+  /*
+   * Format date columns.
+   */
+  if (rows.length > 0) {
+    sheet
+      .getRange(2, 7, rows.length, 3)
+      .setNumberFormat('yyyy-mm-dd hh:mm:ss');
+  }
+
+  /*
+   * Reasonable widths.
+   */
+  sheet.autoResizeColumns(
+    1,
+    requiredColumns
+  );
+}
+
+
+/**
+ * Main category synchronization function.
+ *
+ * Run this function from Apps Script:
+ *
+ *   syncLoyverseCategories()
+ */
+function syncLoyverseCategories() {
+  const startTime = new Date();
+
+  Logger.log(
+    '=== UTOY\'S CATEGORIES SYNC START ==='
+  );
+
+  const categories =
+    getAllLoyverseCategoriesForSync_();
+
+  Logger.log(
+    'Loyverse categories retrieved: ' +
+    categories.length
+  );
+
+  const rows =
+    buildCategoriesRows_(categories);
+
+  Logger.log(
+    'Prepared CATEGORIES rows: ' +
+    rows.length
+  );
+
+  /*
+   * Nothing is written until the complete dataset has
+   * been retrieved, transformed and validated.
+   */
+  writeCategories_(rows);
+
+  const elapsed =
+    new Date().getTime() -
+    startTime.getTime();
+
+  Logger.log(
+    'Categories: ' +
+    rows.length
+  );
+
+  Logger.log(
+    'Elapsed ms: ' +
+    elapsed
+  );
+
+  Logger.log(
+    '=== UTOY\'S CATEGORIES SYNC COMPLETE ==='
+  );
+
+  return {
+    success: true,
+    categories: rows.length,
+    elapsedMs: elapsed
+  };
+}
+
+
+/**
+ * Verify the CATEGORIES sheet after synchronization.
+ */
+function verifyCategoriesSync() {
+  const spreadsheet =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  const sheet =
+    spreadsheet.getSheetByName(
+      CATEGORIES_SHEET_NAME
+    );
+
+  if (!sheet) {
+    throw new Error(
+      'CATEGORIES sheet does not exist.'
+    );
+  }
+
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+
+  if (lastRow === 0) {
+    throw new Error(
+      'CATEGORIES sheet is empty.'
+    );
+  }
+
+  const values = sheet
+    .getRange(
+      1,
+      1,
+      lastRow,
+      Math.min(
+        lastColumn,
+        CATEGORIES_HEADERS.length
+      )
+    )
+    .getValues();
+
+  const headers = values[0];
+
+  const rows = values.slice(1);
+
+  const categoryIds = {};
+  const loyverseIds = {};
+
+  let activeCount = 0;
+  let deletedCount = 0;
+
+  rows.forEach(function(row) {
+
+    const categoryId =
+      String(row[0] || '').trim();
+
+    const loyverseId =
+      String(row[1] || '').trim();
+
+    const active =
+      row[5] === true ||
+      String(row[5]).toLowerCase() === 'true';
+
+    if (categoryId) {
+      if (categoryIds[categoryId]) {
+        throw new Error(
+          'Verification failed: duplicate Category_ID ' +
+          categoryId
+        );
+      }
+
+      categoryIds[categoryId] = true;
+    }
+
+    if (loyverseId) {
+      if (loyverseIds[loyverseId]) {
+        throw new Error(
+          'Verification failed: duplicate Loyverse_Category_ID ' +
+          loyverseId
+        );
+      }
+
+      loyverseIds[loyverseId] = true;
+    }
+
+    if (active) {
+      activeCount++;
+    } else {
+      deletedCount++;
+    }
+  });
+
+  Logger.log(
+    '=== CATEGORIES VERIFICATION ==='
+  );
+
+  Logger.log(
+    'Rows including header: ' +
+    lastRow
+  );
+
+  Logger.log(
+    'Columns maintained: ' +
+    CATEGORIES_HEADERS.length
+  );
+
+  Logger.log(
+    'Categories: ' +
+    rows.length
+  );
+
+  Logger.log(
+    'Unique Category IDs: ' +
+    Object.keys(categoryIds).length
+  );
+
+  Logger.log(
+    'Unique Loyverse Category IDs: ' +
+    Object.keys(loyverseIds).length
+  );
+
+  Logger.log(
+    'Active: ' +
+    activeCount
+  );
+
+  Logger.log(
+    'Inactive/deleted: ' +
+    deletedCount
+  );
+
+  Logger.log(
+    'Headers: ' +
+    headers.join(' | ')
+  );
+
+  Logger.log(
+    '=== CATEGORIES VERIFICATION COMPLETE ==='
+  );
+
+  return {
+    success: true,
+    rowsIncludingHeader: lastRow,
+    categories: rows.length,
+    uniqueCategoryIds:
+      Object.keys(categoryIds).length,
+    uniqueLoyverseCategoryIds:
+      Object.keys(loyverseIds).length,
+    active: activeCount,
+    inactiveOrDeleted: deletedCount
+  };
+}
+
+
+/**
+ * Read-only inspection helper.
+ *
+ * This does NOT modify Google Sheets.
+ *
+ * Useful for confirming exactly what Loyverse is returning
+ * before synchronization.
+ */
+function inspectLoyverseCategories() {
+  const categories =
+    getAllLoyverseCategoriesForSync_();
+
+  Logger.log(
+    '=== LOYVERSE CATEGORY INSPECTION ==='
+  );
+
+  Logger.log(
+    'Total categories: ' +
+    categories.length
+  );
+
+  categories.forEach(function(category, index) {
+
+    Logger.log(
+      (index + 1) +
+      '. ' +
+      category.name +
+      ' | ID: ' +
+      category.id +
+      ' | Color: ' +
+      (category.color || '') +
+      ' | Deleted: ' +
+      (category.deleted_at || 'NO')
+    );
+  });
+
+  Logger.log(
+    '=== LOYVERSE CATEGORY INSPECTION COMPLETE ==='
+  );
+
+  return categories;
+}

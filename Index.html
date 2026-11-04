@@ -1,0 +1,276 @@
+/**
+ * Utoy's Tapsi
+ * Loyverse API Integration
+ *
+ * PRODUCTS PHASE - Step 1
+ *
+ * Purpose:
+ * - Securely connect to Loyverse
+ * - Test API authentication
+ * - Retrieve the Loyverse item catalog
+ * - Inspect image_url, variants, categories, SKUs, etc.
+ *
+ * IMPORTANT:
+ * The Loyverse access token is stored in
+ * Apps Script Script Properties.
+ *
+ * Property name:
+ * LOYVERSE_ACCESS_TOKEN
+ */
+
+const LOYVERSE_API_BASE = 'https://api.loyverse.com/v1.0';
+
+
+/**
+ * Returns the Loyverse access token from Script Properties.
+ *
+ * NEVER hard-code the token here.
+ */
+function getLoyverseAccessToken() {
+  const token = PropertiesService
+    .getScriptProperties()
+    .getProperty('LOYVERSE_ACCESS_TOKEN');
+
+  if (!token) {
+    throw new Error(
+      'LOYVERSE_ACCESS_TOKEN is not configured in Script Properties.'
+    );
+  }
+
+  return token.trim();
+}
+
+
+/**
+ * Generic authenticated GET request to Loyverse.
+ *
+ * @param {string} endpoint Endpoint beginning with "/"
+ * @return {Object} Parsed JSON response
+ */
+function loyverseGet(endpoint) {
+
+  const token = getLoyverseAccessToken();
+
+  const url = LOYVERSE_API_BASE + endpoint;
+
+  const response = UrlFetchApp.fetch(url, {
+    method: 'get',
+    headers: {
+      Authorization: 'Bearer ' + token,
+      Accept: 'application/json'
+    },
+    muteHttpExceptions: true
+  });
+
+  const statusCode = response.getResponseCode();
+  const body = response.getContentText();
+
+  if (statusCode < 200 || statusCode >= 300) {
+    throw new Error(
+      'Loyverse API request failed.\n' +
+      'HTTP Status: ' + statusCode + '\n' +
+      'Response: ' + body
+    );
+  }
+
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    throw new Error(
+      'Loyverse returned an invalid JSON response.\n' +
+      'Response: ' + body
+    );
+  }
+}
+
+
+/**
+ * Basic connection test.
+ *
+ * Retrieves the first few Loyverse items.
+ *
+ * Run this function first.
+ */
+function testLoyverseConnection() {
+
+  const data = loyverseGet('/items?limit=5');
+
+  const items = Array.isArray(data.items)
+    ? data.items
+    : [];
+
+  Logger.log('======================================');
+  Logger.log("Utoy's → Loyverse API TEST");
+  Logger.log('======================================');
+
+  Logger.log('Connection: SUCCESS');
+  Logger.log('Items returned: ' + items.length);
+
+  items.forEach(function(item, index) {
+
+    Logger.log(
+      (index + 1) +
+      '. ' +
+      item.item_name +
+      ' | ID: ' +
+      item.id +
+      ' | Image: ' +
+      (item.image_url ? 'YES' : 'NO')
+    );
+  });
+
+  Logger.log('======================================');
+
+  return {
+    success: true,
+    count: items.length
+  };
+}
+
+
+/**
+ * Retrieves the complete current Loyverse item catalog.
+ *
+ * The API supports up to 250 items per request.
+ * Cursor pagination is handled automatically.
+ *
+ * This function is intentionally read-only.
+ */
+function getAllLoyverseItems() {
+
+  const allItems = [];
+  let cursor = null;
+
+  do {
+
+    let endpoint = '/items?limit=250';
+
+    if (cursor) {
+      endpoint += '&cursor=' + encodeURIComponent(cursor);
+    }
+
+    const data = loyverseGet(endpoint);
+
+    const items = Array.isArray(data.items)
+      ? data.items
+      : [];
+
+    allItems.push.apply(allItems, items);
+
+    cursor = data.cursor || null;
+
+  } while (cursor);
+
+  return allItems;
+}
+
+
+/**
+ * PRODUCTS investigation test.
+ *
+ * Retrieves the full Loyverse catalog and searches
+ * for Bagnet Silog from your export.
+ *
+ * This does NOT write anything to Sheets.
+ */
+function inspectLoyverseProducts() {
+
+  const items = getAllLoyverseItems();
+
+  Logger.log('======================================');
+  Logger.log("Utoy's PRODUCTS / Loyverse Investigation");
+  Logger.log('======================================');
+
+  Logger.log('Total Loyverse items: ' + items.length);
+
+  let imageCount = 0;
+  let variantCount = 0;
+
+  items.forEach(function(item) {
+
+    if (item.image_url) {
+      imageCount++;
+    }
+
+    if (Array.isArray(item.variants)) {
+      variantCount += item.variants.length;
+    }
+  });
+
+  Logger.log('Items with images: ' + imageCount);
+  Logger.log('Total variants: ' + variantCount);
+
+  /**
+   * Look specifically for Bagnet Silog.
+   */
+  const bagnet = items.find(function(item) {
+    return String(item.item_name || '').trim().toLowerCase() ===
+      'bagnet silog';
+  });
+
+  if (!bagnet) {
+
+    Logger.log('Bagnet Silog was NOT found.');
+
+  } else {
+
+    Logger.log('');
+    Logger.log('----- BAGNET SILOG -----');
+
+    Logger.log('Item ID: ' + bagnet.id);
+    Logger.log('Handle: ' + bagnet.handle);
+    Logger.log('Name: ' + bagnet.item_name);
+    Logger.log('Category ID: ' + bagnet.category_id);
+    Logger.log('Description: ' + bagnet.description);
+    Logger.log('Image URL: ' + (
+      bagnet.image_url ? 'PRESENT' : 'NOT PRESENT'
+    ));
+    Logger.log('Option 1: ' + bagnet.option1_name);
+    Logger.log('Option 2: ' + bagnet.option2_name);
+    Logger.log('Option 3: ' + bagnet.option3_name);
+    Logger.log(
+      'Modifier IDs: ' +
+      JSON.stringify(bagnet.modifiers_ids || [])
+    );
+
+    const variants = Array.isArray(bagnet.variants)
+      ? bagnet.variants
+      : [];
+
+    Logger.log('Variants: ' + variants.length);
+
+    variants.forEach(function(variant, index) {
+
+      Logger.log(
+        'Variant ' + (index + 1) +
+        ' | SKU: ' + variant.sku +
+        ' | Option 1: ' + (variant.option1_value || '') +
+        ' | Option 2: ' + (variant.option2_value || '') +
+        ' | Option 3: ' + (variant.option3_value || '')
+      );
+
+      if (Array.isArray(variant.stores)) {
+
+        variant.stores.forEach(function(store) {
+
+          Logger.log(
+            '   Store: ' + store.store_id +
+            ' | Price: ' + store.price +
+            ' | Available: ' + store.available_for_sale +
+            ' | Pricing: ' + store.pricing_type
+          );
+        });
+      }
+    });
+  }
+
+  Logger.log('======================================');
+
+  return {
+    success: true,
+    itemCount: items.length,
+    itemsWithImages: imageCount,
+    variantCount: variantCount,
+    bagnetFound: !!bagnet
+  };
+}

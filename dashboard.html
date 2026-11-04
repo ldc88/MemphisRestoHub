@@ -1,0 +1,1372 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+  <base target="_top">
+
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1">
+
+  <style>
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f3f4f6;
+      color: #222;
+    }
+
+    .header {
+      background: #111;
+      color: white;
+      padding: 18px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-row {
+      max-width: 1200px;
+      margin: auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .restaurant-name {
+      font-size: 21px;
+      font-weight: bold;
+    }
+
+    .last-update {
+      font-size: 12px;
+      opacity: .75;
+      margin-top: 4px;
+    }
+
+    .dashboard {
+      max-width: 1200px;
+      margin: auto;
+      padding: 18px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .summary-card {
+      background: white;
+      border-radius: 12px;
+      padding: 15px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.08);
+      text-align: center;
+    }
+
+    .summary-number {
+      font-size: 27px;
+      font-weight: bold;
+    }
+
+    .summary-label {
+      margin-top: 5px;
+      font-size: 12px;
+      color: #777;
+    }
+
+    .orders {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+    }
+
+    .order-card {
+      background: white;
+      border-radius: 14px;
+      padding: 17px;
+      box-shadow: 0 3px 12px rgba(0,0,0,.10);
+      border-left: 6px solid #888;
+    }
+
+    .order-card.new {
+      border-left-color: #d97706;
+    }
+
+    .order-card.accepted {
+      border-left-color: #2563eb;
+    }
+
+    .order-card.preparing {
+      border-left-color: #7c3aed;
+    }
+
+    .order-card.ready {
+      border-left-color: #059669;
+    }
+
+    .order-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .order-id {
+      font-weight: bold;
+      font-size: 14px;
+      word-break: break-all;
+    }
+
+    .order-time {
+      font-size: 11px;
+      color: #777;
+      margin-top: 3px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 5px 9px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: bold;
+      background: #eee;
+      white-space: nowrap;
+      height: fit-content;
+    }
+
+    .customer {
+      font-size: 17px;
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+
+    .table {
+      font-size: 13px;
+      color: #666;
+      margin-bottom: 14px;
+    }
+
+    .item {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid #eee;
+      font-size: 14px;
+    }
+
+    .instruction {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #b45309;
+    }
+
+    .total {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 15px;
+      font-size: 18px;
+      font-weight: bold;
+    }
+
+    .notes {
+      margin-top: 13px;
+      padding: 10px;
+      background: #fff7ed;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 11px;
+      cursor: pointer;
+      font-weight: bold;
+      background: #222;
+      color: white;
+    }
+
+    button:hover {
+      opacity: .9;
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    .refresh-button {
+      min-width: 100px;
+    }
+
+    .payment {
+      margin-top: 12px;
+      width: 100%;
+      background: white;
+      color: #222;
+      border: 1px solid #ddd;
+    }
+
+    .payment:hover {
+      background: #f5f5f5;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 60px 20px;
+      color: #777;
+      background: white;
+      border-radius: 14px;
+    }
+
+    .error {
+      padding: 20px;
+      background: #fee2e2;
+      color: #991b1b;
+      border-radius: 10px;
+      margin-bottom: 20px;
+    }
+
+    .loading {
+      opacity: .65;
+      pointer-events: none;
+    }
+
+    @media(max-width: 900px) {
+
+      .summary {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+    }
+
+    @media(max-width: 700px) {
+
+      .summary {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .summary-card:last-child {
+        grid-column: span 2;
+      }
+
+      .header-row {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .refresh-button {
+        width: 100%;
+      }
+
+    }
+
+  </style>
+
+</head>
+
+
+<body>
+
+  <header class="header">
+
+    <div class="header-row">
+
+      <div>
+
+        <div class="restaurant-name">
+          Utoy's Tapsilog
+        </div>
+
+        <div
+          class="last-update"
+          id="lastUpdate">
+          Connecting...
+        </div>
+
+      </div>
+
+      <button
+        id="refreshButton"
+        class="refresh-button"
+        onclick="loadDashboard(true)">
+        REFRESH
+      </button>
+
+    </div>
+
+  </header>
+
+
+  <main class="dashboard">
+
+    <div id="errorContainer"></div>
+
+
+    <section class="summary">
+
+      <div class="summary-card">
+
+        <div
+          class="summary-number"
+          id="newCount">
+          0
+        </div>
+
+        <div class="summary-label">
+          NEW
+        </div>
+
+      </div>
+
+
+      <div class="summary-card">
+
+        <div
+          class="summary-number"
+          id="acceptedCount">
+          0
+        </div>
+
+        <div class="summary-label">
+          ACCEPTED
+        </div>
+
+      </div>
+
+
+      <div class="summary-card">
+
+        <div
+          class="summary-number"
+          id="preparingCount">
+          0
+        </div>
+
+        <div class="summary-label">
+          PREPARING
+        </div>
+
+      </div>
+
+
+      <div class="summary-card">
+
+        <div
+          class="summary-number"
+          id="readyCount">
+          0
+        </div>
+
+        <div class="summary-label">
+          READY
+        </div>
+
+      </div>
+
+
+      <div class="summary-card">
+
+        <div
+          class="summary-number"
+          id="activeCount">
+          0
+        </div>
+
+        <div class="summary-label">
+          ACTIVE ORDERS
+        </div>
+
+      </div>
+
+    </section>
+
+
+    <section
+      id="orders"
+      class="orders">
+
+      <div class="empty">
+        Loading orders...
+      </div>
+
+    </section>
+
+  </main>
+
+
+  <script>
+
+    let dashboardOrders = [];
+
+    let dashboardLoading = false;
+
+
+    /* =====================================================
+       START
+       ===================================================== */
+
+    document.addEventListener(
+      'DOMContentLoaded',
+      function() {
+
+        loadDashboard(false);
+
+        /*
+         * Automatic refresh every 10 seconds.
+         */
+
+        setInterval(
+          function() {
+            loadDashboard(false);
+          },
+          10000
+        );
+
+      }
+    );
+
+
+    /* =====================================================
+       LOAD DASHBOARD
+       ===================================================== */
+
+    function loadDashboard(
+      manualRefresh
+    ) {
+
+      /*
+       * Prevent overlapping requests.
+       */
+
+      if (dashboardLoading) {
+        return;
+      }
+
+
+      dashboardLoading = true;
+
+
+      const refreshButton =
+        document.getElementById(
+          'refreshButton'
+        );
+
+
+      if (manualRefresh) {
+
+        refreshButton.disabled = true;
+
+        refreshButton.innerText =
+          'REFRESHING...';
+
+      }
+
+
+      google.script.run
+
+        .withSuccessHandler(
+          function(response) {
+
+            dashboardLoading = false;
+
+
+            if (manualRefresh) {
+
+              refreshButton.disabled =
+                false;
+
+              refreshButton.innerText =
+                'REFRESH';
+
+            }
+
+
+            if (
+              !response ||
+              response.success !== true
+            ) {
+
+              showError(
+                response &&
+                response.error
+                  ? response.error
+                  : 'Unable to load orders.'
+              );
+
+              return;
+
+            }
+
+
+            clearError();
+
+
+            dashboardOrders =
+              Array.isArray(
+                response.orders
+              )
+                ? response.orders
+                : [];
+
+
+            renderSummary(
+              response.summary || {}
+            );
+
+
+            renderOrders(
+              dashboardOrders
+            );
+
+
+            document
+              .getElementById(
+                'lastUpdate'
+              )
+              .innerText =
+                'Updated ' +
+                new Date()
+                  .toLocaleTimeString();
+
+          }
+        )
+
+        .withFailureHandler(
+          function(error) {
+
+            dashboardLoading = false;
+
+
+            if (manualRefresh) {
+
+              refreshButton.disabled =
+                false;
+
+              refreshButton.innerText =
+                'REFRESH';
+
+            }
+
+
+            showError(
+              error &&
+              error.message
+                ? error.message
+                : 'Connection error.'
+            );
+
+          }
+        )
+
+        .getDashboardOrders();
+
+    }
+
+
+    /* =====================================================
+       SUMMARY
+       ===================================================== */
+
+    function renderSummary(
+      summary
+    ) {
+
+      document
+        .getElementById(
+          'newCount'
+        )
+        .innerText =
+          Number(
+            summary.newOrders || 0
+          );
+
+
+      document
+        .getElementById(
+          'acceptedCount'
+        )
+        .innerText =
+          Number(
+            summary.accepted || 0
+          );
+
+
+      document
+        .getElementById(
+          'preparingCount'
+        )
+        .innerText =
+          Number(
+            summary.preparing || 0
+          );
+
+
+      document
+        .getElementById(
+          'readyCount'
+        )
+        .innerText =
+          Number(
+            summary.ready || 0
+          );
+
+
+      document
+        .getElementById(
+          'activeCount'
+        )
+        .innerText =
+          Number(
+            summary.totalActive || 0
+          );
+
+    }
+
+
+    /* =====================================================
+       RENDER ORDERS
+       ===================================================== */
+
+    function renderOrders(
+      orders
+    ) {
+
+      const container =
+        document.getElementById(
+          'orders'
+        );
+
+
+      if (!orders.length) {
+
+        container.innerHTML =
+
+          '<div class="empty">' +
+
+            '<strong>No active orders</strong>' +
+
+            '<br><br>' +
+
+            'New customer orders will appear here automatically.' +
+
+          '</div>';
+
+        return;
+
+      }
+
+
+      let html = '';
+
+
+      orders.forEach(
+        function(order) {
+
+          html +=
+            renderOrderCard(
+              order
+            );
+
+        }
+      );
+
+
+      container.innerHTML =
+        html;
+
+    }
+
+
+    /* =====================================================
+       ORDER CARD
+       ===================================================== */
+
+    function renderOrderCard(
+      order
+    ) {
+
+      const status =
+        String(
+          order.status || 'NEW'
+        )
+        .toUpperCase();
+
+
+      const statusClass =
+        status.toLowerCase();
+
+
+      let html =
+
+        '<div class="order-card ' +
+          statusClass +
+        '">' +
+
+
+          '<div class="order-top">' +
+
+            '<div>' +
+
+              '<div class="order-id">' +
+
+                escapeHtml(
+                  order.orderId
+                ) +
+
+              '</div>' +
+
+              '<div class="order-time">' +
+
+                escapeHtml(
+                  order.orderDate
+                ) +
+
+              '</div>' +
+
+            '</div>' +
+
+
+            '<div class="badge">' +
+
+              escapeHtml(
+                status
+              ) +
+
+            '</div>' +
+
+          '</div>' +
+
+
+          '<div class="customer">' +
+
+            escapeHtml(
+              order.customerName ||
+              'Customer'
+            ) +
+
+          '</div>' +
+
+
+          '<div class="table">' +
+
+            (
+              order.tableId
+
+                ? 'TABLE: ' +
+                  escapeHtml(
+                    order.tableId
+                  )
+
+                : 'ONLINE ORDER'
+            ) +
+
+            ' · ' +
+
+            escapeHtml(
+              order.orderType ||
+              ''
+            ) +
+
+          '</div>';
+
+
+      /*
+       * ITEMS
+       */
+
+      const items =
+        Array.isArray(
+          order.items
+        )
+          ? order.items
+          : [];
+
+
+      items.forEach(
+        function(item) {
+
+          html +=
+
+            '<div class="item">' +
+
+              '<div>' +
+
+                '<strong>' +
+
+                  Number(
+                    item.quantity || 0
+                  ) +
+
+                  ' × ' +
+
+                '</strong>' +
+
+                escapeHtml(
+                  item.itemName ||
+                  ''
+                );
+
+
+          if (
+            item.specialInstructions
+          ) {
+
+            html +=
+
+              '<div class="instruction">' +
+
+                'Note: ' +
+
+                escapeHtml(
+                  item.specialInstructions
+                ) +
+
+              '</div>';
+
+          }
+
+
+          html +=
+
+              '</div>' +
+
+              '<div>' +
+
+                '₱' +
+
+                Number(
+                  item.lineTotal || 0
+                ).toFixed(2) +
+
+              '</div>' +
+
+            '</div>';
+
+        }
+      );
+
+
+      /*
+       * CUSTOMER NOTES
+       */
+
+      if (
+        order.customerNotes
+      ) {
+
+        html +=
+
+          '<div class="notes">' +
+
+            '<strong>Order Note:</strong>' +
+
+            '<br>' +
+
+            escapeHtml(
+              order.customerNotes
+            ) +
+
+          '</div>';
+
+      }
+
+
+      /*
+       * TOTAL
+       */
+
+      html +=
+
+          '<div class="total">' +
+
+            '<span>TOTAL</span>' +
+
+            '<span>₱' +
+
+              Number(
+                order.total || 0
+              ).toFixed(2) +
+
+            '</span>' +
+
+          '</div>';
+
+
+      /*
+       * PAYMENT
+       */
+
+      const paymentStatus =
+        String(
+          order.paymentStatus ||
+          'UNPAID'
+        )
+        .toUpperCase();
+
+
+      const nextPaymentStatus =
+        paymentStatus === 'PAID'
+          ? 'UNPAID'
+          : 'PAID';
+
+
+      html +=
+
+          '<button ' +
+
+            'class="payment" ' +
+
+            'onclick="togglePayment(' +
+
+              '\'' +
+              escapeJs(
+                order.orderId
+              ) +
+              '\'' +
+
+              ', ' +
+
+              '\'' +
+              nextPaymentStatus +
+              '\'' +
+
+            ')">' +
+
+            'PAYMENT: ' +
+
+            escapeHtml(
+              paymentStatus
+            ) +
+
+          '</button>';
+
+
+      /*
+       * ACTIONS
+       */
+
+      html +=
+        '<div class="actions">';
+
+
+      if (
+        status === 'NEW'
+      ) {
+
+        html +=
+
+          '<button ' +
+
+            'onclick="changeStatus(' +
+
+              '\'' +
+              escapeJs(
+                order.orderId
+              ) +
+              '\'' +
+
+              ', ' +
+
+              '\'ACCEPTED\'' +
+
+            ')">' +
+
+            'ACCEPT' +
+
+          '</button>' +
+
+
+          '<button ' +
+
+            'onclick="changeStatus(' +
+
+              '\'' +
+              escapeJs(
+                order.orderId
+              ) +
+              '\'' +
+
+              ', ' +
+
+              '\'REJECTED\'' +
+
+            ')">' +
+
+            'REJECT' +
+
+          '</button>';
+
+      }
+
+
+      else if (
+        status === 'ACCEPTED'
+      ) {
+
+        html +=
+
+          '<button ' +
+
+            'onclick="changeStatus(' +
+
+              '\'' +
+              escapeJs(
+                order.orderId
+              ) +
+              '\'' +
+
+              ', ' +
+
+              '\'PREPARING\'' +
+
+            ')">' +
+
+            'START PREPARING' +
+
+          '</button>';
+
+      }
+
+
+      else if (
+        status === 'PREPARING'
+      ) {
+
+        html +=
+
+          '<button ' +
+
+            'onclick="changeStatus(' +
+
+              '\'' +
+              escapeJs(
+                order.orderId
+              ) +
+              '\'' +
+
+              ', ' +
+
+              '\'READY\'' +
+
+            ')">' +
+
+            'MARK READY' +
+
+          '</button>';
+
+      }
+
+
+      else if (
+        status === 'READY'
+      ) {
+
+        html +=
+
+          '<button ' +
+
+            'onclick="changeStatus(' +
+
+              '\'' +
+              escapeJs(
+                order.orderId
+              ) +
+              '\'' +
+
+              ', ' +
+
+              '\'COMPLETED\'' +
+
+            ')">' +
+
+            'COMPLETE ORDER' +
+
+          '</button>';
+
+      }
+
+
+      html +=
+
+          '</div>' +
+
+        '</div>';
+
+
+      return html;
+
+    }
+
+
+    /* =====================================================
+       CHANGE ORDER STATUS
+       ===================================================== */
+
+    function changeStatus(
+      orderId,
+      status
+    ) {
+
+      google.script.run
+
+        .withSuccessHandler(
+          function(response) {
+
+            if (
+              !response ||
+              response.success !== true
+            ) {
+
+              showError(
+                response &&
+                response.error
+                  ? response.error
+                  : 'Unable to update order.'
+              );
+
+              return;
+
+            }
+
+
+            loadDashboard(false);
+
+          }
+        )
+
+        .withFailureHandler(
+          function(error) {
+
+            showError(
+              error &&
+              error.message
+                ? error.message
+                : 'Status update failed.'
+            );
+
+          }
+        )
+
+        .updateOrderStatus(
+          orderId,
+          status
+        );
+
+    }
+
+
+    /* =====================================================
+       PAYMENT
+       ===================================================== */
+
+    function togglePayment(
+      orderId,
+      newStatus
+    ) {
+
+      google.script.run
+
+        .withSuccessHandler(
+          function(response) {
+
+            if (
+              !response ||
+              response.success !== true
+            ) {
+
+              showError(
+                response &&
+                response.error
+                  ? response.error
+                  : 'Unable to update payment status.'
+              );
+
+              return;
+
+            }
+
+
+            loadDashboard(false);
+
+          }
+        )
+
+        .withFailureHandler(
+          function(error) {
+
+            showError(
+              error &&
+              error.message
+                ? error.message
+                : 'Payment update failed.'
+            );
+
+          }
+        )
+
+        .updatePaymentStatus(
+          orderId,
+          newStatus
+        );
+
+    }
+
+
+    /* =====================================================
+       ERROR
+       ===================================================== */
+
+    function showError(
+      message
+    ) {
+
+      document
+        .getElementById(
+          'errorContainer'
+        )
+        .innerHTML =
+
+          '<div class="error">' +
+
+            '<strong>Dashboard Error</strong>' +
+
+            '<br><br>' +
+
+            escapeHtml(
+              message ||
+              'Unknown error.'
+            ) +
+
+          '</div>';
+
+    }
+
+
+    function clearError() {
+
+      document
+        .getElementById(
+          'errorContainer'
+        )
+        .innerHTML = '';
+
+    }
+
+
+    /* =====================================================
+       ESCAPE HTML
+       ===================================================== */
+
+    function escapeHtml(
+      value
+    ) {
+
+      if (
+        value === null ||
+        value === undefined
+      ) {
+
+        return '';
+
+      }
+
+
+      return String(value)
+
+        .replace(
+          /&/g,
+          '&amp;'
+        )
+
+        .replace(
+          /</g,
+          '&lt;'
+        )
+
+        .replace(
+          />/g,
+          '&gt;'
+        )
+
+        .replace(
+          /"/g,
+          '&quot;'
+        )
+
+        .replace(
+          /'/g,
+          '&#039;'
+        );
+
+    }
+
+
+    /* =====================================================
+       ESCAPE JAVASCRIPT STRING
+       ===================================================== */
+
+    function escapeJs(
+      value
+    ) {
+
+      if (
+        value === null ||
+        value === undefined
+      ) {
+
+        return '';
+
+      }
+
+
+      return String(value)
+
+        .replace(
+          /\\/g,
+          '\\\\'
+        )
+
+        .replace(
+          /'/g,
+          "\\'"
+        )
+
+        .replace(
+          /"/g,
+          '\\"'
+        )
+
+        .replace(
+          /\r/g,
+          '\\r'
+        )
+
+        .replace(
+          /\n/g,
+          '\\n'
+        );
+
+    }
+
+  </script>
+
+</body>
+
+</html>
